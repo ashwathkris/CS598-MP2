@@ -3150,10 +3150,44 @@ class ASCIIEncoder : public EncoderImpl, virtual public TypedEncoder<DType> {
   ::arrow::BufferBuilder sink_;
 };
 
-template <typename DType>
-void ASCIIEncoder<DType>::Put(const T* buffer, int num_values) {
-  // TO BE IMPLEMENTED
+template <>
+void ASCIIEncoder<FloatType>::Put(const T* buffer, int num_values) {
+    assert(num_values >= 0);
+    for (int i=0;i<num_values;i++) 
+	{
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(2) << buffer[i];
+        std::string encode = stream.str();
+        encode=encode+'\0';
+        PARQUET_THROW_NOT_OK(sink_.Append(encode.c_str(), encode.size()));
+    }
 }
+
+
+template <>
+void ASCIIEncoder<Int64Type>::Put(const T* buffer, int num_values) {
+  assert(num_values >= 0);
+  for (int i=0;i<num_values;i++) 
+  {
+    std::string encode = std::to_string(buffer[i]);
+    encode=encode+'\0';
+    PARQUET_THROW_NOT_OK(sink_.Append(encode.c_str(), encode.size()));
+  }
+}
+
+
+template <>
+void ASCIIEncoder<Int32Type>::Put(const T* buffer, int num_values) {
+  assert(num_values>=0);
+  for(int i=0;i<num_values;i++) 
+  {
+    std::string encode=std::to_string(buffer[i]);
+    encode=encode+'\0';
+    PARQUET_THROW_NOT_OK(sink_.Append(encode.c_str(), encode.size()));
+  }
+}
+
+
 
 // ----------------------------------------------------------------------
 // ASCII Decoder: Decodes ASCII into integers
@@ -3194,9 +3228,104 @@ class ASCIIDecoder : public DecoderImpl, virtual public TypedDecoder<DType> {
 };
 
 
-template <typename DType>
-int ASCIIDecoder<DType>::Decode(T* buffer, int max_values) {
-  // TO BE IMPLEMENTED
+template <>
+int ASCIIDecoder<Int32Type>::Decode(T* buffer, int max_values) {
+  assert(max_values > 0);
+  int decode = 0;
+  const uint8_t* currdata=reinterpret_cast<const uint8_t*>(data_);
+  while(decode<max_values&&currdata<reinterpret_cast<const uint8_t*>(data_)+len_) 
+  {
+    const char* end_ptr=reinterpret_cast<const char*>(strchr(reinterpret_cast<const char*>(currdata), '\0'));
+    if(!end_ptr) 
+	{
+		break;
+	}
+    long long x = std::stoll(std::string(reinterpret_cast<const char*>(currdata),end_ptr));
+    buffer[decode++]=static_cast<typename Int32Type::c_type>(x);
+    currdata=reinterpret_cast<const uint8_t*>(end_ptr)+1;
+  }
+  int space=currdata-reinterpret_cast<const uint8_t*>(data_);
+  data_=data_+space;
+  len_=len_-space;
+  num_values_=num_values_-decode;
+  return decode;
+}
+
+template <>
+int ASCIIDecoder<Int64Type>::Decode(T* buffer, int max_values) {
+  assert(max_values > 0);
+  int decode=0;
+  const uint8_t* currdata=reinterpret_cast<const uint8_t*>(data_);
+  while(decode<max_values&&currdata<reinterpret_cast<const uint8_t*>(data_)+len_) 
+  {
+    const char* end_ptr = reinterpret_cast<const char*>(strchr(reinterpret_cast<const char*>(currdata), '\0'));
+    if(!end_ptr) 
+	{
+		break;
+	}
+    long long x = std::stoll(std::string(reinterpret_cast<const char*>(currdata),end_ptr));
+    buffer[decode++]=static_cast<typename Int64Type::c_type>(x);
+    currdata=reinterpret_cast<const uint8_t*>(end_ptr)+1;
+  }
+  int space=currdata-reinterpret_cast<const uint8_t*>(data_);
+  data_=data_+space;
+  len_=len_-space;
+  num_values_=num_values_-decode;
+  return decode;
+}
+
+template <>
+int ASCIIDecoder<FloatType>::Decode(T* buffer, int max_values) {
+    assert(max_values > 0);
+    int decode = 0;
+    const uint8_t* currdata = reinterpret_cast<const uint8_t*>(data_);
+    while (decode<max_values && currdata<reinterpret_cast<const uint8_t*>(data_)+len_) 
+	{
+        const char* complete = strchr(reinterpret_cast<const char*>(currdata), '\0');
+        if(!complete)
+		{
+			break;
+		}
+        float num = 0.0f;
+        bool fl = false;
+        int dec = 0;
+        const char* temp = reinterpret_cast<const char*>(currdata);
+        while(temp!=complete) 
+		{
+            if(*temp=='.') 
+			{
+                fl=true;
+            } 
+			else 
+			{
+                int decimal = *temp - '0';
+                if (decimal>=0&&decimal<=9) 
+				{
+                    if(fl) 
+					{
+                        dec+=1;
+                        num=num+decimal * std::pow(10, -dec);
+                    }
+					else 
+					{
+                        num=num*10+decimal;
+                    }
+                } 
+				else 
+				{
+                    break;
+                }
+            }
+            temp++;
+        }
+        buffer[decode++] = num;
+        currdata = reinterpret_cast<const uint8_t*>(complete) + 1;
+    }
+	int space=currdata-reinterpret_cast<const uint8_t*>(data_);
+  	data_=data_+space;
+  	len_=len_-space;
+  	num_values_=num_values_-decode;
+  	return decode;
 }
 
 // ----------------------------------------------------------------------
@@ -3903,8 +4032,8 @@ std::unique_ptr<Encoder> MakeEncoder(Type::type type_num, Encoding::type encodin
       case Type::INT64:
         return std::make_unique<ASCIIEncoder<Int64Type>>(descr, pool);
       // Uncomment this when you finish implementing the float encoder and decoder:
-      // case Type::FLOAT:
-      //   return std::make_unique<ASCIIEncoder<FloatType>>(descr,pool);
+      case Type::FLOAT:
+        return std::make_unique<ASCIIEncoder<FloatType>>(descr,pool);
       default:
         throw ParquetException(
             "ASCII encoder only supports INT32 and INT64");
@@ -3988,8 +4117,8 @@ std::unique_ptr<Decoder> MakeDecoder(Type::type type_num, Encoding::type encodin
       case Type::INT64:
         return std::make_unique<ASCIIDecoder<Int64Type>>(descr);
       // Uncomment this when you finish implementing the float encoder and decoder:
-      // case Type::FLOAT:
-      //   return std::make_unique<ASCIIDecoder<FloatType>>(descr);
+      case Type::FLOAT:
+        return std::make_unique<ASCIIDecoder<FloatType>>(descr);
       default:
         throw ParquetException(
             "ASCII decoder only supports INT32 and INT64");
