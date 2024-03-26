@@ -19,4 +19,7 @@ jobs:
     - name: grade
       run: |
         cd cpp/cs598/ascii 
+        chmod +x ./run.sh
+        chmod +x ./build_arrow.sh
+        chmod +x ./build_example.sh
         docker-compose run grade
